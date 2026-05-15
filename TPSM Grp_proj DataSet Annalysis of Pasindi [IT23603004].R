@@ -1,0 +1,314 @@
+#  TPSM Group Assignment 
+#  Group name : Data4ce 
+#  Done By : A K P C N Alawatta
+#  Topic: Doctor-patient communication improves patient understanding
+#  Focus: Does communication quality predict a patient's ability
+#         to understand next steps and feel confident navigating
+#         the healthcare system?
+
+
+# STEP 1: Setup - working folder + packages
+
+setwd("E:/Year 3/Y3 S1/TPSM - IT3011/dataset")   
+getwd()
+
+install.packages(c("tidyverse", "janitor", "skimr", "naniar",
+                   "car", "lmtest", "caret", "MASS"))
+
+library(tidyverse)
+library(janitor)
+library(skimr)
+library(naniar)
+library(car)
+library(lmtest)
+library(caret)
+library(MASS)   # needed for ordinal logistic regression
+
+
+# STEP 2: Load data & keep only the needed columns
+
+health_df <- read_csv("dataset.csv", show_col_types = FALSE) %>% clean_names()
+dim(health_df)
+
+# Select the 9 columns relevant to my analysis
+health_selected <- health_df %>%
+  select(
+    pcc_scale,               # pre-built patient-centred communication scale (Main X)
+    spent_enough_time,       # doctor spent enough time (Supporting X)
+    feelings_addressed,      # patient feelings were addressed (Supporting X)
+    understood_next_steps,   # outcome Y1
+    confident_med_forms,     # outcome Y2
+    age,                     # control
+    birth_sex,               # control
+    education,               # control
+    income_ranges            # control (NEW)
+  )
+
+dim(health_selected)
+names(health_selected)
+
+
+#---------------- error occured --------------- 
+names(health_df) # check whether column names are correct 
+
+# Fix the MASS conflict first
+detach("package:MASS", unload = TRUE)
+library(tidyverse)
+
+# select columns (names are confirmed correct)
+health_selected <- health_df %>%
+  dplyr::select(
+    pcc_scale,
+    spent_enough_time,
+    feelings_addressed,
+    understood_next_steps,
+    confident_med_forms,
+    age,
+    birth_sex,
+    education,
+    income_ranges
+  )
+
+dim(health_selected)
+names(health_selected)
+#------------------- error fixed -------------------
+
+
+# STEP 3: Clean missing values & recode variables
+
+# Replace all common "missing" text values with Not Available (NA)
+health_df2 <- health_selected %>%
+  mutate(across(everything(), as.character)) %>%
+  mutate(across(everything(), ~ ifelse(
+    grepl("Missing data|Not Ascertained|Web partial|Don't know|inapplicable|error", .,
+          ignore.case = TRUE),
+    NA,
+    .
+  )))
+
+# Convert numeric and factor columns
+health_df2 <- health_df2 %>%
+  mutate(
+    pcc_scale   = as.numeric(pcc_scale),
+    age         = as.numeric(age),
+    birth_sex   = as.factor(birth_sex),
+    education   = as.factor(education),
+    income_ranges = as.factor(income_ranges)
+  )
+
+# Check how many missing values per column
+colSums(is.na(health_df2))
+
+
+# Recode Outcome Y1: Understood Next Steps 
+health_df2 <- health_df2 %>%
+  mutate(
+    understood_n = case_when(
+      understood_next_steps == "Never"     ~ 1,
+      understood_next_steps == "Sometimes" ~ 2,
+      understood_next_steps == "Usually"   ~ 3,
+      understood_next_steps == "Always"    ~ 4,
+      TRUE ~ NA_real_
+    )
+  )
+
+# Recode Outcome Y2: ConfidentMedForms 
+health_df2 <- health_df2 %>%
+  mutate(
+    confident_n = case_when(
+      confident_med_forms == "Not at all"   ~ 1,
+      confident_med_forms == "A little"     ~ 2,
+      confident_med_forms == "Somewhat"     ~ 3,
+      confident_med_forms == "Quite a bit"  ~ 4,
+      confident_med_forms == "Completely"   ~ 5,
+      TRUE ~ NA_real_
+    )
+  )
+
+# Recode Supporting "X" s (spent enough time, feelings addressed) — optional numeric if needed
+health_df2 <- health_df2 %>%
+  mutate(
+    time_n = case_when(
+      spent_enough_time == "Never"     ~ 1,
+      spent_enough_time == "Sometimes" ~ 2,
+      spent_enough_time == "Usually"   ~ 3,
+      spent_enough_time == "Always"    ~ 4,
+      TRUE ~ NA_real_
+    ),
+    feelings_n = case_when(
+      feelings_addressed == "Never"     ~ 1,
+      feelings_addressed == "Sometimes" ~ 2,
+      feelings_addressed == "Usually"   ~ 3,
+      feelings_addressed == "Always"    ~ 4,
+      TRUE ~ NA_real_
+    )
+  )
+
+
+# Final clean dataset — drop rows missing on key X and Y1
+data_final <- health_df2 %>%
+  drop_na(pcc_scale, understood_n)
+
+dim(data_final)
+summary(data_final$pcc_scale)
+summary(data_final$understood_n)
+
+
+
+# STEP 4: Descriptive Analytics
+
+# Summary statistics
+summary(data_final[, c("pcc_scale", "understood_n", "confident_n", "age")])
+skim(data_final[, c("pcc_scale", "understood_n", "confident_n", "age")])
+
+# Frequency tables
+table(data_final$birth_sex)
+prop.table(table(data_final$birth_sex)) * 100
+
+table(data_final$education)
+prop.table(table(data_final$education)) * 100
+
+table(data_final$income_ranges)
+prop.table(table(data_final$income_ranges)) * 100
+
+table(data_final$understood_next_steps)
+table(data_final$confident_med_forms)
+
+
+# --- GRAPHS ---
+
+# Histogram: Distribution of PCCScale
+ggplot(data_final, aes(x = pcc_scale)) +
+  geom_histogram(bins = 20, fill = "steelblue", color = "white") +
+  labs(title = "Distribution of Patient-Centred Communication Scale",
+       x = "PCCScale Score", y = "Count")
+
+# Boxplot: PCCScale by Understood Next Steps category
+ggplot(data_final, aes(x = as.factor(understood_n), y = pcc_scale, fill = as.factor(understood_n))) +
+  geom_boxplot() +
+  labs(title = "Communication Quality by Understanding of Next Steps",
+       x = "Understood Next Steps (1=Never, 4=Always)",
+       y = "PCCScale Score") +
+  theme(legend.position = "none")
+
+# Bar chart: Confident Med Forms distribution
+ggplot(data_final %>% drop_na(confident_n),
+       aes(x = as.factor(confident_n))) +
+  geom_bar(fill = "coral") +
+  labs(title = "Confidence Filling Medical Forms",
+       x = "Confidence Level (1=Not at all, 5=Completely)",
+       y = "Count")
+
+# Scatter plot: PCCScale vs UnderstoodNextSteps
+ggplot(data_final, aes(x = pcc_scale, y = understood_n)) +
+  geom_jitter(width = 0.1, height = 0.1, alpha = 0.3, color = "steelblue") +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "Communication Scale vs Understanding Next Steps",
+       x = "PCCScale", y = "Understood Next Steps")
+
+
+
+# STEP 5: Inferential Analytics
+
+# --- Spearman correlations ---
+# PCCScale vs UnderstoodNextSteps
+cor.test(data_final$pcc_scale, data_final$understood_n, method = "spearman")
+
+# PCCScale vs ConfidentMedForms 
+cor.test(data_final$pcc_scale, data_final$confident_n,
+         method = "spearman", use = "complete.obs")
+
+
+# --- Simple linear regression (Y1 ~ PCCScale) ---
+model1 <- lm(understood_n ~ pcc_scale, data = data_final)
+summary(model1)
+
+# --- Multiple regression with all controls ---
+model2 <- lm(understood_n ~ pcc_scale + age + birth_sex + education + income_ranges,
+             data = data_final)
+summary(model2)
+
+
+# --- Diagnostics for model2 ---
+
+# Multicollinearity check
+vif(model2)
+
+# Heteroskedasticity test
+bptest(model2)
+
+# Normality of residuals
+shapiro.test(sample(residuals(model2), 5000))   # sample because dataset is large
+
+# Residual plots
+par(mfrow = c(2, 2))
+plot(model2)
+par(mfrow = c(1, 1))
+
+
+
+# STEP 6: Predictive Analytics (LM vs KNN)
+
+# Drop rows with any missing values in predictors + outcome for modelling
+model_data <- data_final %>%
+  drop_na(pcc_scale, age, birth_sex, education, income_ranges, understood_n)
+
+dim(model_data)
+
+# 80/20 train-test split
+set.seed(42)
+split_idx <- createDataPartition(model_data$understood_n, p = 0.8, list = FALSE)
+train_set <- model_data[split_idx, ]
+test_set  <- model_data[-split_idx, ]
+
+dim(train_set)
+dim(test_set)
+
+
+# --- MODEL A: Linear Regression ---
+lm_model <- train(
+  understood_n ~ pcc_scale + age + birth_sex + education + income_ranges,
+  data      = train_set,
+  method    = "lm",
+  trControl = trainControl(method = "cv", number = 5)
+)
+
+lm_predictions <- predict(lm_model, newdata = test_set)
+lm_results <- postResample(lm_predictions, test_set$understood_n)
+print(lm_results)
+
+
+# --- MODEL B: K-Nearest Neighbours (KNN) ---
+set.seed(42)
+knn_model <- train(
+  understood_n ~ pcc_scale + age + birth_sex + education + income_ranges,
+  data      = train_set,
+  method    = "knn",
+  trControl = trainControl(method = "cv", number = 5),
+  tuneLength = 5   # tries 5 different values of k automatically
+)
+
+knn_predictions <- predict(knn_model, newdata = test_set)
+knn_results <- postResample(knn_predictions, test_set$understood_n)
+print(knn_results)
+
+
+# --- Compare both models ---
+cat("\n--- Model Comparison ---\n")
+cat("Linear Regression:\n"); print(lm_results)
+cat("\nKNN:\n"); print(knn_results)
+
+--------------------------------------------------------------
+
+# SUMMARY: Key outputs for report
+
+# Spearman correlation (communication vs understanding)
+cor.test(data_final$pcc_scale, data_final$understood_n, method = "spearman")
+
+# Multiple regression summary
+summary(model2)
+
+# Predictive model results
+postResample(lm_predictions, test_set$understood_n)
+postResample(knn_predictions, test_set$understood_n)
+
